@@ -7,6 +7,7 @@ const cors = require('cors');
 const isProd = process.env.NODE_ENV === 'production';
 
 const app = express();
+app.set('trust proxy', 1); // needed to get real client IP behind Render's proxy
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
@@ -18,7 +19,7 @@ const io = new Server(server, {
 app.use(cors());
 app.use(express.json());
 
-// roomCode -> { text: string, clients: Set<socketId> }
+// roomCode -> { text: string, clients: Set<socketId>, allowedIPs: Set<string> | null }
 const rooms = new Map();
 
 function generateCode() {
@@ -35,8 +36,25 @@ function cleanupRoom(code) {
   }, 30 * 60 * 1000);
 }
 
+// Normalize IPv4-mapped IPv6 addresses (e.g. ::ffff:1.2.3.4 → 1.2.3.4)
+function normalizeIP(ip) {
+  if (!ip) return '';
+  if (ip.startsWith('::ffff:')) return ip.slice(7);
+  return ip;
+}
+
+function isIPAllowed(room, ip) {
+  if (!room.allowedIPs) return true;
+  return room.allowedIPs.has(normalizeIP(ip));
+}
+
+app.get('/api/my-ip', (req, res) => {
+  res.json({ ip: normalizeIP(req.ip) });
+});
+
 app.post('/api/create-room', (req, res) => {
   const rawName = req.body?.name;
+  const rawIPs = req.body?.allowedIps;
   let code;
   if (rawName) {
     code = String(rawName).toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 20);
@@ -45,7 +63,15 @@ app.post('/api/create-room', (req, res) => {
   } else {
     do { code = generateCode(); } while (rooms.has(code));
   }
-  rooms.set(code, { text: '', clients: new Set() });
+
+  let allowedIPs = null;
+  if (Array.isArray(rawIPs) && rawIPs.length > 0) {
+    const creatorIP = normalizeIP(req.ip);
+    const extras = rawIPs.map(ip => normalizeIP(String(ip).trim())).filter(Boolean);
+    allowedIPs = new Set([creatorIP, ...extras]);
+  }
+
+  rooms.set(code, { text: '', clients: new Set(), allowedIPs });
   res.json({ code });
 });
 
@@ -53,6 +79,7 @@ app.get('/api/room/:code', (req, res) => {
   const code = req.params.code.toUpperCase();
   const room = rooms.get(code);
   if (!room) return res.status(404).json({ error: 'Room not found' });
+  if (!isIPAllowed(room, req.ip)) return res.status(403).json({ error: 'Your IP address is not allowed in this room' });
   res.json({ code, clients: room.clients.size });
 });
 
@@ -65,12 +92,17 @@ io.on('connection', (socket) => {
       socket.emit('room-error', 'Room not found');
       return;
     }
+    const room = rooms.get(code);
+    if (!isIPAllowed(room, socket.handshake.address)) {
+      socket.emit('room-error', 'Your IP address is not allowed in this room');
+      return;
+    }
     currentRoom = code;
     socket.join(code);
-    rooms.get(code).clients.add(socket.id);
+    room.clients.add(socket.id);
 
-    socket.emit('text-update', rooms.get(code).text);
-    io.to(code).emit('client-count', rooms.get(code).clients.size);
+    socket.emit('text-update', room.text);
+    io.to(code).emit('client-count', room.clients.size);
   });
 
   socket.on('update-text', (text) => {

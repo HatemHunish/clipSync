@@ -10,6 +10,9 @@ export default function App() {
   const [roomCode, setRoomCode] = useState('');
   const [joinCode, setJoinCode] = useState('');
   const [customName, setCustomName] = useState('');
+  const [restrictIPs, setRestrictIPs] = useState(false);
+  const [allowedIPsInput, setAllowedIPsInput] = useState('');
+  const [myIP, setMyIP] = useState('');
   const [text, setText] = useState('');
   const [clientCount, setClientCount] = useState(1);
   const [syncStatus, setSyncStatus] = useState('idle'); // idle | syncing | synced
@@ -24,6 +27,11 @@ export default function App() {
     const params = new URLSearchParams(window.location.search);
     const roomParam = params.get('room');
     if (roomParam) setJoinCode(roomParam.toUpperCase().slice(0, 20));
+
+    fetch('/api/my-ip')
+      .then(r => r.json())
+      .then(d => setMyIP(d.ip))
+      .catch(() => {});
   }, []);
 
   const setSyncIdle = useCallback(() => {
@@ -55,11 +63,14 @@ export default function App() {
   const createRoom = async () => {
     setError('');
     const name = customName.trim();
+    const allowedIps = restrictIPs
+      ? allowedIPsInput.split(/[\n,]+/).map(ip => ip.trim()).filter(Boolean)
+      : undefined;
     try {
       const res = await fetch('/api/create-room', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(name ? { name } : {}),
+        body: JSON.stringify({ ...(name ? { name } : {}), ...(allowedIps ? { allowedIps } : {}) }),
       });
       if (res.status === 409) { setError('That room name is already taken'); return; }
       if (!res.ok) throw new Error();
@@ -79,6 +90,7 @@ export default function App() {
     setError('');
     try {
       const res = await fetch(`/api/room/${code}`);
+      if (res.status === 403) { setError('Your IP address is not allowed in this room'); return; }
       if (!res.ok) { setError('Room not found — check the code and try again'); return; }
       setRoomCode(code);
       connectToRoom(code);
@@ -95,6 +107,8 @@ export default function App() {
     setText('');
     setJoinCode('');
     setCustomName('');
+    setRestrictIPs(false);
+    setAllowedIPsInput('');
     setClientCount(1);
     setSyncStatus('idle');
     setError('');
@@ -181,6 +195,35 @@ export default function App() {
               spellCheck={false}
               autoFocus
             />
+
+            <label className="ip-toggle">
+              <input
+                type="checkbox"
+                checked={restrictIPs}
+                onChange={(e) => setRestrictIPs(e.target.checked)}
+              />
+              <LockSvg />
+              <span>Restrict access by IP address</span>
+            </label>
+
+            {restrictIPs && (
+              <div className="ip-section">
+                {myIP && (
+                  <p className="ip-hint">
+                    Your IP <code>{myIP}</code> is automatically allowed.
+                  </p>
+                )}
+                <textarea
+                  className="ip-textarea"
+                  placeholder={'Other allowed IPs, one per line:\n203.0.113.5\n198.51.100.12'}
+                  value={allowedIPsInput}
+                  onChange={(e) => setAllowedIPsInput(e.target.value)}
+                  rows={3}
+                  spellCheck={false}
+                />
+              </div>
+            )}
+
             <button className="btn-primary" onClick={createRoom}>
               Create Room
             </button>
@@ -275,6 +318,15 @@ function BackSvg() {
   return (
     <svg viewBox="0 0 24 24" fill="none" width="18" height="18">
       <path d="M19 12H5M5 12l7 7M5 12l7-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+  );
+}
+
+function LockSvg() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" width="13" height="13">
+      <rect x="3" y="11" width="18" height="11" rx="2" stroke="currentColor" strokeWidth="2"/>
+      <path d="M7 11V7a5 5 0 0110 0v4" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
     </svg>
   );
 }

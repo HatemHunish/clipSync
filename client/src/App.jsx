@@ -9,6 +9,7 @@ export default function App() {
   const [view, setView] = useState('home');
   const [roomCode, setRoomCode] = useState('');
   const [joinCode, setJoinCode] = useState('');
+  const [customName, setCustomName] = useState('');
   const [text, setText] = useState('');
   const [clientCount, setClientCount] = useState(1);
   const [syncStatus, setSyncStatus] = useState('idle'); // idle | syncing | synced
@@ -22,7 +23,7 @@ export default function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const roomParam = params.get('room');
-    if (roomParam) setJoinCode(roomParam.toUpperCase().slice(0, 6));
+    if (roomParam) setJoinCode(roomParam.toUpperCase().slice(0, 20));
   }, []);
 
   const setSyncIdle = useCallback(() => {
@@ -53,8 +54,14 @@ export default function App() {
 
   const createRoom = async () => {
     setError('');
+    const name = customName.trim();
     try {
-      const res = await fetch('/api/create-room', { method: 'POST' });
+      const res = await fetch('/api/create-room', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(name ? { name } : {}),
+      });
+      if (res.status === 409) { setError('That room name is already taken'); return; }
       if (!res.ok) throw new Error();
       const { code } = await res.json();
       setRoomCode(code);
@@ -68,7 +75,7 @@ export default function App() {
 
   const joinRoom = async () => {
     const code = joinCode.trim().toUpperCase();
-    if (code.length !== 6) { setError('Enter a 6-character room code'); return; }
+    if (code.length < 1) { setError('Enter a room code'); return; }
     setError('');
     try {
       const res = await fetch(`/api/room/${code}`);
@@ -87,6 +94,7 @@ export default function App() {
     setRoomCode('');
     setText('');
     setJoinCode('');
+    setCustomName('');
     setClientCount(1);
     setSyncStatus('idle');
     setError('');
@@ -159,25 +167,39 @@ export default function App() {
 
           {error && <div className="error-msg">{error}</div>}
 
-          <button className="btn-primary" onClick={createRoom}>
-            Create New Room
-          </button>
+          <div className="create-group">
+            <input
+              className="name-input"
+              placeholder="Room name (optional)"
+              value={customName}
+              onChange={(e) => {
+                setCustomName(e.target.value.replace(/[^a-zA-Z0-9-]/g, '').slice(0, 20));
+                setError('');
+              }}
+              onKeyDown={(e) => e.key === 'Enter' && createRoom()}
+              maxLength={20}
+              spellCheck={false}
+              autoFocus
+            />
+            <button className="btn-primary" onClick={createRoom}>
+              Create Room
+            </button>
+          </div>
 
-          <div className="divider"><span>or join with a code</span></div>
+          <div className="divider"><span>or join an existing room</span></div>
 
           <div className="join-group">
             <input
               className="code-input"
-              placeholder="ABC123"
+              placeholder="my-room"
               value={joinCode}
               onChange={(e) => {
-                setJoinCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6));
+                setJoinCode(e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 20));
                 setError('');
               }}
               onKeyDown={(e) => e.key === 'Enter' && joinRoom()}
-              maxLength={6}
+              maxLength={20}
               spellCheck={false}
-              autoFocus
             />
             <button className="btn-secondary" onClick={joinRoom}>Join</button>
           </div>

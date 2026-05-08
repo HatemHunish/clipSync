@@ -36,8 +36,15 @@ function cleanupRoom(code) {
 }
 
 app.post('/api/create-room', (req, res) => {
+  const rawName = req.body?.name;
   let code;
-  do { code = generateCode(); } while (rooms.has(code));
+  if (rawName) {
+    code = String(rawName).toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 20);
+    if (!code) return res.status(400).json({ error: 'Invalid room name' });
+    if (rooms.has(code)) return res.status(409).json({ error: 'Room name already taken' });
+  } else {
+    do { code = generateCode(); } while (rooms.has(code));
+  }
   rooms.set(code, { text: '', clients: new Set() });
   res.json({ code });
 });
@@ -53,7 +60,7 @@ io.on('connection', (socket) => {
   let currentRoom = null;
 
   socket.on('join-room', (rawCode) => {
-    const code = String(rawCode).toUpperCase().slice(0, 6);
+    const code = String(rawCode).toUpperCase().slice(0, 20);
     if (!rooms.has(code)) {
       socket.emit('room-error', 'Room not found');
       return;
